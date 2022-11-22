@@ -40,7 +40,9 @@ class ModLocatorInjector {
         final String SCRIPTS_DIR = 'scripts'
 
         // first let's see if there's a dedicated mods.groovy file associated with this script group
-        final modsDotGroovyPath = fs.getPath(SCRIPTS_DIR, 'mods.groovy')
+        var modsDotGroovyPath = fs.getPath(SCRIPTS_DIR, 'mods.groovy')
+        if (!Files.exists(modsDotGroovyPath)) modsDotGroovyPath = fs.getPath('resources', 'mods.groovy')
+
         final IConfigurable configurable
         if (Files.exists(modsDotGroovyPath)) {
             // there is! let's load it in and parse it

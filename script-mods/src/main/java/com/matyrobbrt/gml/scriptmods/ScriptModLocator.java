@@ -27,6 +27,7 @@ import net.minecraftforge.fml.loading.moddiscovery.ModFileInfo;
 import net.minecraftforge.forgespi.language.IConfigurable;
 import net.minecraftforge.forgespi.locating.IModFile;
 import net.minecraftforge.forgespi.locating.IModLocator;
+import net.minecraftforge.forgespi.locating.ModFileLoadingException;
 import org.apache.commons.lang3.function.TriFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,9 +42,12 @@ import java.nio.file.Path;
 import java.nio.file.spi.FileSystemProvider;
 import java.security.CodeSigner;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.jar.Manifest;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public class ScriptModLocator implements IModLocator {
@@ -51,6 +55,7 @@ public class ScriptModLocator implements IModLocator {
     private static final Logger LOGGER = LoggerFactory.getLogger(ScriptModLocator.class);
     public static final String SCRIPTS_DIR = "scripts";
     private static final boolean INJECTED_FS;
+    private static final Pattern SCRIPT_GROUP_FOLDERS_PATTERN = Pattern.compile(".*mods[\\\\/]" + SCRIPTS_DIR + "[\\\\/]?[^\\\\/]*[\\\\/](.*)"); // todo: support other folders than just (...)/mods/scripts/modId/
 
     static {
         boolean managedFsInjection;
@@ -148,26 +153,45 @@ public class ScriptModLocator implements IModLocator {
             if (Files.isDirectory(inPath)) {
                 final var scriptsDir = fs.getPath(SCRIPTS_DIR);
                 Files.createDirectories(scriptsDir);
-                // The mod has multiple scripts, let's find them
-                try (final var stream = Files.list(inPath).filter(Files::isRegularFile)
-                        .filter(file -> FileUtils.fileExtension(file).equals("groovy"))) {
-                    // ... and add them to the fs
-                    stream.forEach(LamdbaExceptionUtils.rethrowConsumer(script -> {
-                        final var outPath = scriptsDir.resolve(script.getFileName().toString());
-                        Files.copy(script, outPath);
+                // The mod is a script group, so let's recursively copy over all its files and folders...
+                try (final var stream = Files.walk(inPath).filter(Files::isRegularFile)) {
+                    // ...as long as it contains a Main.groovy file somewhere
+                    if (stream.noneMatch(file -> file.getFileName().toString().equals("Main.groovy")))
+                        return new ModFileOrException(null, new ModFileLoadingException("Script group mod at " + inPath + "is missing a Main.groovy file"));
+                }
+                try (final var stream2 = Files.walk(inPath).filter(Files::isRegularFile)) {
+                    // add the files to the fs, creating any necessary directories as we go
+                    stream2.forEach(LamdbaExceptionUtils.rethrowConsumer(path -> {
+                        LOGGER.info("path: {}", path);
+                        final Matcher matcher = SCRIPT_GROUP_FOLDERS_PATTERN.matcher(path.toString());
+                        if (matcher.matches()) {
+                            final String relativePath = matcher.group(1).replace('\\', '/');
+                            final Path outPath;
+                            if (relativePath.endsWith(".groovy") && !path.getFileName().endsWith("mods.groovy")) {
+                                outPath = scriptsDir.resolve(relativePath);
+                            } else {
+                                outPath = fs.getPath(relativePath);
+                            }
+                            LOGGER.info("relativePath: {}", relativePath);
+                            LOGGER.info("outPath: {}", outPath);
+                            Files.createDirectories(outPath.getParent());
+                            Files.copy(path, outPath);
+                        } else {
+                            LOGGER.info("no match");
+                        }
                     }));
                 }
             } else if (Files.isRegularFile(inPath)) {
-                // This file is the main file of the mod, so let's add it as Main.groovy
+                // This is a single-file script mod, so let's add it as Main.groovy
                 var mainPath = fs.getPath(SCRIPTS_DIR, "Main.groovy");
                 Files.createDirectories(mainPath.getParent());
                 Files.write(mainPath, Files.readAllBytes(inPath));
             } else {
-                throw new IllegalArgumentException("Script mod at " + inPath + " is not a directory nor a file!");
+                return new ModFileOrException(null, new ModFileLoadingException("Script mod at " + inPath + " is not a directory nor a file!"));
             }
         } catch (IOException e) {
             LOGGER.error("Failed to set up script mod: ", e);
-            throw new RuntimeException(e);
+            return new ModFileOrException(null, new ModFileLoadingException("Failed to set up script mod: " + e));
         }
 
         final PathGetter pathGetter;

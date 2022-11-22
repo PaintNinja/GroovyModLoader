@@ -67,7 +67,7 @@ final class GModContainer extends ModContainer {
         log.debug('Loaded GMod class {} on loader {} and module {}', className, modClass.classLoader, module)
 
         if (ScriptFileCompiler.isScriptMod(info.owningFile.file)) {
-            // generate the pack.mcmeta for the script
+            // generate the pack.mcmeta for the script if it doesn't already have one
             packMetaInjector(modClass.classLoader).accept(info)
         }
     }

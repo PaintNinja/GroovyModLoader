@@ -121,7 +121,7 @@ public final class ScriptFileCompiler {
         try (final Stream<Path> stream = Files.walk(fs.getPath("scripts"))
                 .filter(it -> {
                     final String fileName = it.toString();
-                    return fileName.endsWith(".groovy") && !fileName.equals("mods.groovy");
+                    return fileName.endsWith(".groovy") && !fileName.endsWith("/mods.groovy");
                 })) {
             // Compile the classes
             compileClasses(stream.toList());
